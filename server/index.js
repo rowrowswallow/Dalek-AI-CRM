@@ -1,3 +1,34 @@
+#!/usr/bin/env node
+/* ------------------------------------------------------------------
+   Node 版本检查 —— 朋友 clone 下来最容易卡在这里
+  node:sqlite 需要 Node >= 22.5
+------------------------------------------------------------------ */
+const [maj, min] = process.versions.node.split('.').map(Number);
+if (maj < 22 || (maj === 22 && min < 5)) {
+  console.error([
+    '',
+    '  ✗ Node 版本过低',
+    '',
+    '  当前版本：v' + process.versions.node,
+    '  需要版本：v22.5.0 或更高（用到了内置的 node:sqlite）',
+    '',
+    '  升级方式：',
+    '    · 官网下载  https://nodejs.org/   （选 LTS）',
+    '    · 或用 nvm  nvm install 22 && nvm use 22',
+    '',
+    '  升级后重新运行  npm start',
+    '',
+  ].join('\n'));
+  process.exit(1);
+}
+
+try { require('node:sqlite'); } catch (e) {
+  console.error('\n  ✗ 当前 Node 不包含 node:sqlite 模块（v' + process.versions.node + '）\n'
+    + '  请升级到 v22.5.0 或更高版本。\n');
+  process.exit(1);
+}
+
+
 /**
  * AICRM 原型后端 —— 零依赖 Node HTTP 服务
  *
