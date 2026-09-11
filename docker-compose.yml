@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  aicrm:
+    build: .
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+      # 可选：服务端统一配 AI Key（不填则用户在设置页自己填）
+      # - AI_API_KEY=sk-xxx
+      # - AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+      # - AI_MODEL=qwen-plus
+    restart: unless-stopped

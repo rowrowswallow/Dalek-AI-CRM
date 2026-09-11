@@ -1,0 +1,111 @@
+/* 抽屉演示页：模拟企业微信内的聊天工具栏场景 */
+.drawer-body {
+  background: #E9E9E9;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; padding: 24px 16px;
+}
+
+.stage { display: flex; gap: 28px; align-items: flex-start; }
+
+/* 手机壳 */
+.phone {
+  width: 390px; height: 800px; flex: 0 0 390px;
+  background: #000; border-radius: 42px; padding: 10px;
+  box-shadow: var(--sh-4), 0 0 0 1px rgba(0,0,0,.35);
+  position: relative;
+}
+.phone-screen {
+  width: 100%; height: 100%; background: #EDEDED; border-radius: 34px;
+  overflow: hidden; display: flex; flex-direction: column; position: relative;
+}
+.notch {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  width: 112px; height: 26px; background: #000; border-radius: var(--r-pill); z-index: 30;
+}
+
+/* 状态栏 + 企微标题栏 */
+.wx-status {
+  height: 46px; background: #EDEDED; display: flex; align-items: flex-end;
+  justify-content: space-between; padding: 0 22px 5px; font-size: 12px; color: #000;
+  font-weight: 600; flex: 0 0 auto;
+}
+.wx-nav {
+  height: 46px; background: #EDEDED; border-bottom: 1px solid #DCDCDC;
+  display: flex; align-items: center; padding: 0 10px; gap: 8px; flex: 0 0 auto;
+}
+.wx-back { font-size: 19px; color: #181818; width: 24px; }
+.wx-title { flex: 1; font-size: 15px; font-weight: 600; color: #181818; }
+.wx-more { font-size: 17px; color: #181818; letter-spacing: 1px; }
+
+/* 聊天区 */
+.wx-chat {
+  flex: 1; overflow-y: auto; padding: 12px 12px 8px;
+  background: #EDEDED; display: flex; flex-direction: column; gap: 12px;
+}
+.wx-time { text-align: center; font-size: 11px; color: #9A9A9A; }
+.wx-msg { display: flex; gap: 8px; align-items: flex-start; }
+.wx-msg.me { flex-direction: row-reverse; }
+.wx-av {
+  width: 34px; height: 34px; border-radius: 5px; flex: 0 0 34px;
+  display: grid; place-items: center; font-size: 13px; color: #fff; font-weight: 600;
+}
+.wx-av.cust { background: #5B7FA8; }
+.wx-av.me { background: #7B9E5B; }
+.wx-bubble {
+  max-width: 210px; padding: 8px 11px; border-radius: 5px;
+  font-size: 13.5px; line-height: 1.55; background: #fff; color: #181818;
+  position: relative;
+}
+.wx-msg.me .wx-bubble { background: #95EC69; }
+
+/* 工具栏 */
+.wx-toolbar {
+  flex: 0 0 auto; border-top: 1px solid #DCDCDC; background: #F7F7F7;
+  padding: 8px 10px 14px; display: flex; gap: 8px; overflow-x: auto;
+}
+.wx-tool {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  border: 0; background: transparent; padding: 4px 6px; border-radius: 8px;
+  font-size: 10px; color: #5A5A5A;
+}
+.wx-tool:active { background: #E4E4E4; }
+.wx-tool-ico {
+  width: 38px; height: 38px; border-radius: 9px; background: #fff;
+  display: grid; place-items: center; font-size: 17px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08);
+}
+.wx-tool.hi .wx-tool-ico { background: var(--accent); color: #fff; }
+
+/* 抽屉面板 */
+.wx-drawer {
+  position: absolute; inset: 0; z-index: 40; display: flex;
+  background: rgba(0,0,0,.28);
+}
+.wx-panel {
+  width: 320px; background: var(--surface); height: 100%;
+  display: flex; flex-direction: column;
+  box-shadow: -8px 0 32px rgba(0,0,0,.16);
+}
+.wx-panel-head {
+  padding: 14px 14px 11px; border-bottom: 1px solid var(--line-soft);
+  display: flex; align-items: flex-start; gap: 9px;
+}
+.wx-panel-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 11px; }
+
+/* 右侧说明栏 */
+.spec { width: 380px; display: flex; flex-direction: column; gap: 12px; }
+.spec-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-3); padding: 14px; box-shadow: var(--sh-1); }
+.spec-h { font-size: 13px; font-weight: 650; margin-bottom: 9px; }
+.spec-row { display: flex; gap: 9px; padding: 6px 0; font-size: 12px; line-height: 1.6; }
+.spec-row b { flex: 0 0 76px; color: var(--ink-3); font-weight: 400; }
+.pill {
+  display: inline-block; padding: 1px 7px; border-radius: var(--r-1);
+  font-size: 11px; background: var(--green-soft); color: var(--green);
+}
+.pill.warn { background: var(--amber-soft); color: var(--amber); }
+.pill.mock { background: var(--violet-soft); color: var(--violet); }
+
+@media (max-width: 1180px) {
+  .stage { flex-direction: column; align-items: center; }
+  .spec { width: 390px; }
+}

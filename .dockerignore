@@ -1,0 +1,11 @@
+node_modules
+web/node_modules
+web/dist
+data
+.git
+.gitignore
+*.md
+shots
+deploy
+Dockerfile
+.dockerignore

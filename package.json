@@ -1,0 +1,20 @@
+{
+  "name": "aicrm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "面向销售负责人的 AI 决策与汇报工作台 —— 对话式管理 + 企微内嵌抽屉 + 一键汇报",
+  "keywords": ["crm", "ai", "sales", "wecom", "vue", "sqlite"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev:server": "node server/index.js",
+    "dev:web": "npm --prefix web run dev",
+    "build": "npm --prefix web install && npm --prefix web run build",
+    "setup": "npm --prefix web install && npm --prefix web run build",
+    "reset": "node -e \"require('./server/db.js').reset();console.log('演示数据已重置')\""
+  },
+  "dependencies": {}
+}
