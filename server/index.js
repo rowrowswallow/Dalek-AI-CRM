@@ -56,6 +56,7 @@ const kb = require('./knowledge.js');
 const auth = require('./auth.js');
 const aist = require('./assistants.js');
 const settings = require('./settings.js');
+const db = require('./db.js').db;
 const extract = require('./extract.js');
 
 /* ------------------------------------------------------------------ 工具 */
@@ -607,11 +608,24 @@ function matchPath(pattern, pathname) {
 }
 
 server.listen(PORT, '127.0.0.1', () => {
+  const mode = settings.effectiveMode();
+  const aiText = mode === 'user' ? '真实模型 · ' + settings.get().model + '（你自己的 API）'
+    : mode === 'env' ? '真实模型 · ' + (process.env.AI_MODEL || '环境变量配置')
+    : '本地规则引擎（未配置 API Key，功能完整可体验）';
+  const hasDist = fs.existsSync(path.join(__dirname, '..', 'web', 'dist', 'index.html'));
+  const c = db.prepare('SELECT COUNT(*) AS c FROM customers').get().c;
+
   console.log('');
-  console.log('  AICRM 原型后端已启动');
+  console.log('  AICRM 已启动');
   console.log('  ─────────────────────────────────────────────');
-  console.log(`  API      http://127.0.0.1:${PORT}/api/meta`);
-  console.log(`  AI 模式   ${AI_KEY ? '真实模型 · ' + AI_MODEL : '本地规则引擎（未配置 API Key）'}`);
-  console.log('  数据     内存 Mock（24 个客户 / 跟进 / 任务 / 标签）');
+  console.log('  打开     http://127.0.0.1:' + PORT + '/');
+  console.log('  登录     chenli / 123456');
+  console.log('  AI 模式  ' + aiText);
+  console.log('  数据     SQLite · data/aicrm.db（' + c + ' 个客户）');
+  if (!hasDist) {
+    console.log('');
+    console.log('  ⚠ 前端还没构建 —— 先执行  npm run setup');
+    console.log('     或开发模式：npm run dev:server + npm run dev:web');
+  }
   console.log('');
 });
