@@ -56,6 +56,13 @@ export const api = {
   logout: () => req('/api/auth/logout', { method: 'POST', body: {} }),
   me: () => req('/api/auth/me'),
   accounts: () => req('/api/auth/accounts'),
+  register: (body) => req('/api/auth/register', { method: 'POST', body }),
+  invites: () => req('/api/auth/invites'),
+  createInvite: (body) => req('/api/auth/invites', { method: 'POST', body }),
+  toggleInvite: (code) => req('/api/auth/invites/toggle', { method: 'POST', body: { code } }),
+  removeInvite: (code) => req('/api/auth/invites/remove', { method: 'POST', body: { code } }),
+  users: () => req('/api/auth/users'),
+  removeUser: (id) => req('/api/auth/users/remove', { method: 'POST', body: { id } }),
 
   /* 批量 */
   batchCustomers: (ids, action, value) => req('/api/batch/customers', { method: 'POST', body: { ids, action, value } }),

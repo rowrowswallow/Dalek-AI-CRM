@@ -88,6 +88,13 @@ function tokenOf(req) {
   return req.headers['x-aicrm-token'] || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
 }
 
+/** 当前请求所属的工作区（未登录时为空字符串，表示不过滤——仅内部调用） */
+function wsOf(req) {
+  const u = auth.userByToken(tokenOf(req));
+  // 到达这里说明已经过中央鉴权；仍加一道保险，宁可返回一个不存在的值也不放行全量
+  return u ? u.workspace_id : '__no_workspace__';
+}
+
 /* ------------------------------------------------------------------ 路由 */
 const routes = [];
 const get = (p, h) => routes.push(['GET', p, h]);
@@ -109,8 +116,8 @@ get('/api/meta', () => ({
 }));
 
 /* ---- 客户 ---- */
-get('/api/customers', (q) => {
-  let list = store.customers();
+get('/api/customers', (q, p, b, req) => {
+  let list = store.customers(null, wsOf(req));
   if (q.tag) list = list.filter((c) => c.tags.includes(q.tag));
   if (q.industry) list = list.filter((c) => c.industry === q.industry);
   if (q.owner) list = list.filter((c) => c.owner_name === q.owner);
@@ -128,13 +135,13 @@ get('/api/customers', (q) => {
   return { ok: true, total: list.length, list };
 });
 
-get('/api/customers/:id', (q, p) => {
-  const c = store.customer(p.id);
+get('/api/customers/:id', (q, p, b, req) => {
+  const c = store.customerIn(p.id, wsOf(req));
   if (!c) return { ok: false, error: 'not_found' };
   return {
     ok: true,
     customer: c,
-    followups: store.followups({ customer_id: c.id }),
+    followups: store.followups({ customer_id: c.id }, wsOf(req)),
     tasks: store.tasks({ customer_id: c.id }),
   };
 });
@@ -144,9 +151,9 @@ patch('/api/customers/:id', (q, p, body) => {
   return c ? { ok: true, customer: c } : { ok: false, error: 'not_found' };
 });
 
-post('/api/customers', (q, p, body) => {
+post('/api/customers', (q, p, body, req) => {
   if (!body.company_name) return { ok: false, error: 'company_name_required' };
-  return { ok: true, customer: store.addCustomer(body) };
+  return { ok: true, customer: store.addCustomer(body, wsOf(req)) };
 });
 
 post('/api/customers/batch-tag', (q, p, body) => {
@@ -163,14 +170,14 @@ post('/api/customers/batch-tag', (q, p, body) => {
 });
 
 /* ---- 跟进 ---- */
-get('/api/followups', (q) => ({
+get('/api/followups', (q, p, b, req) => ({
   ok: true,
-  list: store.followups(q.customer_id ? { customer_id: q.customer_id } : undefined),
+  list: store.followups(q.customer_id ? { customer_id: q.customer_id } : undefined, wsOf(req)),
 }));
 
-post('/api/followups', (q, p, body) => {
+post('/api/followups', (q, p, body, req) => {
   if (!body.customer_id || !body.content) return { ok: false, error: 'invalid' };
-  return { ok: true, followup: store.addFollowup(body) };
+  return { ok: true, followup: store.addFollowup(body, wsOf(req)) };
 });
 
 post('/api/followups/ai-parse', (q, p, body) =>
@@ -181,29 +188,35 @@ post('/api/followups/ai-parse', (q, p, body) =>
 get('/api/tags', () => ({ ok: true, groups: store.tagGroups() }));
 
 /* ---- 任务 ---- */
-get('/api/tasks', (q) => {
-  let list = store.tasks();
+get('/api/tasks', (q, p, b, req) => {
+  let list = store.tasks(null, wsOf(req));
   if (q.status && q.status !== 'all') list = list.filter((t) => t.status === q.status);
   if (q.customer_id) list = list.filter((t) => t.customer_id === q.customer_id);
-  return { ok: true, list, counts: store.taskCounts() };
+  return { ok: true, list, counts: store.taskCounts(wsOf(req)) };
 });
 
-post('/api/tasks', (q, p, body) => {
+post('/api/tasks', (q, p, body, req) => {
   if (!body.title) return { ok: false, error: 'invalid' };
-  return { ok: true, task: store.addTask(body) };
+  return { ok: true, task: store.addTask(body, wsOf(req)) };
 });
 
-post('/api/tasks/remove', (q, p, body) => ({ ok: store.deleteTask(body.id) }));
+post('/api/tasks/remove', (q, p, body, req) => {
+  const mine = store.tasks(null, wsOf(req)).some((t) => t.id === body.id);
+  if (!mine) return { ok: false, error: 'not_found' };
+  return { ok: store.deleteTask(body.id) };
+});
 
-patch('/api/tasks/:id', (q, p, body) => {
+patch('/api/tasks/:id', (q, p, body, req) => {
+  const mine = store.tasks(null, wsOf(req)).some((t) => t.id === p.id);
+  if (!mine) return { ok: false, error: 'not_found' };
   const t = store.updateTask(p.id, body);
   return t ? { ok: true, task: t } : { ok: false, error: 'not_found' };
 });
 
 /* ---- 统计 / 优先级 / 汇报 ---- */
-get('/api/stats/overview', () => ({ ok: true, stats: store.stats() }));
-get('/api/stats/priority', () => ({ ok: true, list: store.topPriority(5) }));
-post('/api/report/generate', (q, p, body) => ({ ok: true, report: store.buildReport(body.range || 'week') }));
+get('/api/stats/overview', (q, p, b, req) => ({ ok: true, stats: store.stats(wsOf(req)) }));
+get('/api/stats/priority', (q, p, b, req) => ({ ok: true, list: store.topPriority(Number(q.n) || 5, wsOf(req)) }));
+post('/api/report/generate', (q, p, body, req) => ({ ok: true, report: store.buildReport(body.range || 'week', wsOf(req)) }));
 
 /* ---- AI 建议的采纳反馈（核心埋点） ---- */
 post('/api/ai/suggestion/feedback', (q, p, body) => {
@@ -241,6 +254,40 @@ get('/api/auth/me', (q, p, b, req) => {
   return u ? { ok: true, user: u, roles: auth.ROLES } : { ok: false, error: 'unauthorized' };
 });
 get('/api/auth/accounts', () => ({ ok: true, accounts: auth.demoAccounts() }));
+
+post('/api/auth/register', (q, p, body) => {
+  const r = auth.register(body || {});
+  return r.ok ? { ok: true, token: r.token, user: r.user } : { ok: false, error: r.error };
+});
+
+/* ---- 邀请码管理（仅登录用户可操作） ---- */
+get('/api/auth/invites', (q, p, b, req) => {
+  const u = auth.userByToken(tokenOf(req));
+  if (!u) return { ok: false, error: 'unauthorized' };
+  return { ok: true, list: auth.listInvites(), stats: auth.stats() };
+});
+
+post('/api/auth/invites', (q, p, body, req) => {
+  const u = auth.userByToken(tokenOf(req));
+  if (!u) return { ok: false, error: 'unauthorized' };
+  return { ok: true, invite: auth.createInvite({ ...(body || {}), created_by: u.username }) };
+});
+
+post('/api/auth/invites/toggle', (q, p, body) => ({ ok: auth.disableInvite(body.code) }));
+post('/api/auth/invites/remove', (q, p, body) => ({ ok: auth.removeInvite(body.code) }));
+
+/* ---- 用户管理 ---- */
+get('/api/auth/users', (q, p, b, req) => {
+  const u = auth.userByToken(tokenOf(req));
+  if (!u) return { ok: false, error: 'unauthorized' };
+  return { ok: true, list: auth.listUsers() };
+});
+
+post('/api/auth/users/remove', (q, p, body, req) => {
+  const u = auth.userByToken(tokenOf(req));
+  if (!u) return { ok: false, error: 'unauthorized' };
+  return auth.removeUser(body.id, u.id);
+});
 
 /* ---- 智能录入：语音文本 / 图片 / 附件 统一解析 ---- */
 function aiCfg() {
@@ -315,13 +362,16 @@ patch('/api/assistants/:id', (q, p, body) => {
 });
 
 /* ---- 会话（按助手隔离）---- */
-get('/api/conversations', (q) => ({ ok: true, list: aist.conversations(q.assistant_id) }));
-get('/api/conversations/:id', (q, p) => {
+get('/api/conversations', (q, p, b, req) => ({ ok: true, list: aist.conversations(q.assistant_id, wsOf(req)) }));
+get('/api/conversations/:id', (q, p, b, req) => {
   const c = aist.conversation(p.id);
-  return c ? { ok: true, conversation: c } : { ok: false, error: 'not_found' };
+  if (!c || (wsOf(req) && c.workspace_id && c.workspace_id !== wsOf(req))) {
+    return { ok: false, error: 'not_found' };
+  }
+  return { ok: true, conversation: c };
 });
-post('/api/conversations/new', (q, p, body) => ({
-  ok: true, conversation: aist.newConversation(body.assistant_id, body.title, body.context),
+post('/api/conversations/new', (q, p, body, req) => ({
+  ok: true, conversation: aist.newConversation(body.assistant_id, body.title, body.context, wsOf(req)),
 }));
 post('/api/conversations/:id/append', (q, p, body) => {
   const c = aist.conversation(p.id);
@@ -330,16 +380,18 @@ post('/api/conversations/:id/append', (q, p, body) => {
   if (body.assistant) aist.addMessage(p.id, 'assistant', body.assistant);
   return { ok: true, conversation: aist.conversation(p.id) };
 });
-post('/api/conversations/clear', (q, p, body) => {
-  aist.clearConversations(body.assistant_id);
+post('/api/conversations/clear', (q, p, body, req) => {
+  aist.clearConversations(body.assistant_id, wsOf(req));
   return { ok: true };
 });
 
 /* ---- 数据看板（看板工程师操作的对象）---- */
-get('/api/dashboard/cards', () => ({ ok: true, cards: aist.cards(), templates: aist.cardTemplates() }));
-post('/api/dashboard/cards/add', (q, p, body) => {
-  const c = aist.addCard(body);
+get('/api/dashboard/cards', (q, p, b, req) => ({ ok: true, cards: aist.cards(wsOf(req)), templates: aist.cardTemplates() }));
+post('/api/dashboard/cards/add', (q, p, body, req) => {
+  const ws = wsOf(req);
+  const c = aist.addCard(body, ws);
   aist.logChange({
+    ws,
     from: 'dashboard', from_name: '看板工程师', reports_to: 'data',
     action: 'add_card',
     summary: `新增卡片「${c.title}」（类型：${c.type}）。原因：${body.reason || '按用户要求配置'}`,
@@ -347,11 +399,12 @@ post('/api/dashboard/cards/add', (q, p, body) => {
   });
   return { ok: true, card: c };
 });
-post('/api/dashboard/cards/remove', (q, p, body) => {
-  const card = aist.cards().find((x) => x.id === body.id);
+post('/api/dashboard/cards/remove', (q, p, body, req) => {
+  const card = aist.cards(wsOf(req)).find((x) => x.id === body.id);
   const ok = aist.removeCard(body.id);
   if (ok) {
     aist.logChange({
+      ws: wsOf(req),
       from: 'dashboard', from_name: '看板工程师', reports_to: 'data',
       action: 'remove_card',
       summary: `移除卡片「${card ? card.title : body.id}」。原因：${body.reason || '按用户要求配置'}`,
@@ -361,11 +414,12 @@ post('/api/dashboard/cards/remove', (q, p, body) => {
   return { ok };
 });
 post('/api/dashboard/cards/reorder', (q, p, body) => ({ ok: aist.reorderCard(body.id, body.dir) }));
-post('/api/dashboard/cards/reset', () => { aist.resetCards(); return { ok: true, cards: aist.cards() }; });
-get('/api/dashboard/changes', () => ({ ok: true, list: aist.changes() }));
+post('/api/dashboard/cards/reset', (q, p, b, req) => { aist.resetCards(wsOf(req)); return { ok: true, cards: aist.cards(wsOf(req)) }; });
+get('/api/dashboard/changes', (q, p, b, req) => ({ ok: true, list: aist.changes(wsOf(req)) }));
 
 /* ---- 批量导入（智能录入的附件通道） ---- */
-post('/api/import/:entity', (q, p, body) => {
+post('/api/import/:entity', (q, p, body, req) => {
+  const ws = wsOf(req);
   const rows = body.rows || [];
   if (!rows.length) return { ok: false, error: 'empty' };
   let n = 0;
@@ -374,13 +428,13 @@ post('/api/import/:entity', (q, p, body) => {
     try {
       if (p.entity === 'customers') {
         if (!r.company_name) { errors.push(`第 ${i + 1} 行缺少公司名称`); return; }
-        store.addCustomer(r);
+        store.addCustomer(r, ws);
       } else if (p.entity === 'tasks') {
         if (!r.title) { errors.push(`第 ${i + 1} 行缺少标题`); return; }
-        store.addTask(r);
+        store.addTask(r, ws);
       } else if (p.entity === 'kb') {
         if (!r.title) { errors.push(`第 ${i + 1} 行缺少标题`); return; }
-        kb.add(r);
+        kb.add(r, ws);
       } else return;
       n++;
     } catch (e) { errors.push(`第 ${i + 1} 行：${e.message}`); }
@@ -389,60 +443,72 @@ post('/api/import/:entity', (q, p, body) => {
 });
 
 /* ---- 演示数据重置 ---- */
-post('/api/admin/reset', () => {
-  require('./db.js').reset();
-  return { ok: true, message: '演示数据已重置' };
+post('/api/admin/reset', (q, p, b, req) => {
+  require('./db.js').reset(wsOf(req));
+  return { ok: true, message: '数据已重置，请重新登录' };
 });
 
 /* ---- 批量操作 ---- */
-post('/api/batch/customers', (q, p, body) => {
+post('/api/batch/customers', (q, p, body, req) => {
   const { ids = [], action, value } = body;
+  const ws = wsOf(req);
+  // 跨工作区的 id 一律过滤掉
+  const mine = new Set(store.customers(null, ws).map((c) => c.id));
+  const safe = ids.filter((id) => mine.has(id));
   if (!ids.length) return { ok: false, error: 'empty' };
-  if (action === 'delete') ids.forEach((id) => store.deleteCustomer(id));
-  else if (action === 'tag') ids.forEach((id) => {
+  if (action === 'delete') safe.forEach((id) => store.deleteCustomer(id));
+  else if (action === 'tag') safe.forEach((id) => {
     const c = store.customer(id); if (!c) return;
     const set = new Set(c.tags);
     ((value || {}).add || []).forEach((t) => set.add(t));
     ((value || {}).remove || []).forEach((t) => set.delete(t));
     store.updateCustomer(id, { tags: [...set] });
   });
-  else if (action === 'owner') ids.forEach((id) => store.updateCustomer(id, { owner_id: value.id, owner_name: value.name }));
-  else if (action === 'level') ids.forEach((id) => store.updateCustomer(id, { level: value }));
-  else if (action === 'stage') ids.forEach((id) => store.updateCustomer(id, { stage: value }));
+  else if (action === 'owner') safe.forEach((id) => store.updateCustomer(id, { owner_id: value.id, owner_name: value.name }));
+  else if (action === 'level') safe.forEach((id) => store.updateCustomer(id, { level: value }));
+  else if (action === 'stage') safe.forEach((id) => store.updateCustomer(id, { stage: value }));
   else return { ok: false, error: 'unknown_action' };
-  return { ok: true, affected: ids.length, action };
+  return { ok: true, affected: safe.length, action };
 });
-post('/api/batch/tasks', (q, p, body) => {
+post('/api/batch/tasks', (q, p, body, req) => {
   const { ids = [], action, value } = body;
-  if (!ids.length) return { ok: false, error: 'empty' };
-  if (action === 'delete') ids.forEach((id) => store.deleteTask(id));
-  else if (action === 'status') ids.forEach((id) => store.updateTask(id, { status: value }));
-  else if (action === 'priority') ids.forEach((id) => store.updateTask(id, { priority: value }));
+  const mine = new Set(store.tasks(null, wsOf(req)).map((t) => t.id));
+  const ids2 = ids.filter((id) => mine.has(id));
+  if (!ids2.length) return { ok: false, error: 'empty' };
+  const ids3 = ids2;
+  if (action === 'delete') ids3.forEach((id) => store.deleteTask(id));
+  else if (action === 'status') ids3.forEach((id) => store.updateTask(id, { status: value }));
+  else if (action === 'priority') ids3.forEach((id) => store.updateTask(id, { priority: value }));
   else return { ok: false, error: 'unknown_action' };
-  return { ok: true, affected: ids.length, action };
+  return { ok: true, affected: ids3.length, action };
 });
-post('/api/batch/kb', (q, p, body) => {
+post('/api/batch/kb', (q, p, body, req) => {
   const { ids = [], action, value } = body;
-  if (!ids.length) return { ok: false, error: 'empty' };
-  if (action === 'delete') ids.forEach((id) => kb.remove(id));
-  else if (action === 'category') ids.forEach((id) => { const it = kb.get(id); if (it) it.category = value; });
+  const mine = new Set(kb.list({}, wsOf(req)).list.map((k) => k.id));
+  const safe = ids.filter((id) => mine.has(id));
+  if (!safe.length) return { ok: false, error: 'empty' };
+  if (action === 'delete') safe.forEach((id) => kb.remove(id));
+  else if (action === 'category') safe.forEach((id) => kb.update(id, { category: value }));
   else return { ok: false, error: 'unknown_action' };
-  return { ok: true, affected: ids.length, action };
+  return { ok: true, affected: safe.length, action };
 });
 
 /* ---- 知识库 / 素材库 ---- */
 get('/api/kb/categories', () => ({ ok: true, categories: kb.categories(), types: kb.types() }));
-get('/api/kb/stats', () => ({ ok: true, stats: kb.stats(), tags: kb.tags() }));
-get('/api/kb/list', (q) => {
-  const r = kb.list({ category: q.category, type: q.type, q: q.q, tag: q.tag });
+get('/api/kb/stats', (q, p, b, req) => ({ ok: true, stats: kb.stats(wsOf(req)), tags: kb.tags(wsOf(req)) }));
+get('/api/kb/list', (q, p, b, req) => {
+  const r = kb.list({ category: q.category, type: q.type, q: q.q, tag: q.tag }, wsOf(req));
   return { ok: true, ...r };
 });
-get('/api/kb/get/:id', (q, p) => {
+get('/api/kb/get/:id', (q, p, b, req) => {
   const it = kb.get(p.id);
-  return it ? { ok: true, item: it } : { ok: false, error: 'not_found' };
+  if (!it || (wsOf(req) && it.workspace_id !== wsOf(req))) return { ok: false, error: 'not_found' };
+  return { ok: true, item: it };
 });
-post('/api/kb/add', (q, p, body) => ({ ok: true, item: kb.add(body) }));
-post('/api/kb/update', (q, p, body) => {
+post('/api/kb/add', (q, p, body, req) => ({ ok: true, item: kb.add(body, wsOf(req)) }));
+post('/api/kb/update', (q, p, body, req) => {
+  const own = kb.get(body.id);
+  if (!own || own.workspace_id !== wsOf(req)) return { ok: false, error: 'not_found' };
   const it = kb.update(body.id, body.patch || body);
   return it ? { ok: true, item: it } : { ok: false, error: 'not_found' };
 });
@@ -453,10 +519,10 @@ post('/api/kb/use', (q, p, body) => {
 });
 
 /** 知识库问答：检索 + 组装答案（本地为 RAG-lite，配 Key 后可换真实模型） */
-post('/api/kb/ask', (q, p, body) => {
+post('/api/kb/ask', (q, p, body, req) => {
   const question = (body.question || '').trim();
   if (!question) return { ok: false, error: 'empty' };
-  const r = kb.list({ q: question });
+  const r = kb.list({ q: question }, wsOf(req));
   const hits = r.list.slice(0, 4);
   if (!hits.length) {
     return { ok: true, answer: '知识库里没有找到相关内容。可以换个说法，或者先补充这条资料。', sources: [] };
@@ -471,19 +537,20 @@ post('/api/kb/ask', (q, p, body) => {
 });
 
 /** 定向话术生成：知识库 × 客户上下文（学悟空的 targeted-script，但服务于「对上」也服务于「对客户」） */
-post('/api/kb/script', (q, p, body) => {
+post('/api/kb/script', (q, p, body, req) => {
   const { customer_id, target = 'customer', intent = '' } = body;
+  const ws = wsOf(req);
   const c = customer_id ? store.customer(customer_id) : null;
 
   if (target === 'boss') {
     // 汇报口径：从「汇报资料」类里取
-    const pool = kb.list({ category: 'report' }).list;
+    const pool = kb.list({ category: 'report' }, ws).list;
     const pick = intent && /线索|变少|下降/.test(intent)
       ? pool.find((x) => x.title.includes('线索'))
       : intent && /跟丢|流失/.test(intent)
         ? pool.find((x) => x.title.includes('跟丢'))
         : pool.find((x) => x.title.includes('老板'));
-    const structure = kb.list({ category: 'report' }).list.find((x) => x.title.includes('模板'));
+    const structure = kb.list({ category: 'report' }, ws).list.find((x) => x.title.includes('模板'));
     return {
       ok: true, target: 'boss',
       script: (pick ? `**${pick.title}**\n${pick.content}` : '')
@@ -500,7 +567,7 @@ post('/api/kb/script', (q, p, body) => {
   else if (tags.includes('长期沉默')) want = '唤醒';
   else if (tags.includes('已报价') || tags.includes('商务谈判')) want = '促单';
 
-  const pool = kb.list({ category: 'script' }).list;
+  const pool = kb.list({ category: 'script' }, ws).list;
   const hit = pool.find((x) => x.tags.includes(want)) || pool[0];
   const opener = c
     ? `> 对象：${c.contact_name}（${c.company_name}）· 阶段：${c.stage} · 当前状态：${c.ai_status}\n\n`
@@ -512,8 +579,8 @@ post('/api/kb/script', (q, p, body) => {
   };
 });
 
-get('/api/kb/tag/:tag', (q, p) => {
-  const r = kb.list({ tag: decodeURIComponent(p.tag) });
+get('/api/kb/tag/:tag', (q, p, b, req) => {
+  const r = kb.list({ tag: decodeURIComponent(p.tag) }, wsOf(req));
   return { ok: true, ...r };
 });
 
@@ -578,6 +645,16 @@ const server = http.createServer(async (req, res) => {
       return fs.createReadStream(file).pipe(res);
     }
     return json(res, { ok: false, error: 'not_found', hint: '前端请用 vite dev（cd web && npm run dev）' }, 404);
+  }
+
+  /* 需要登录才能访问的数据接口白名单外一律鉴权 */
+  const PUBLIC = [
+    '/api/health', '/api/meta', '/api/auth/login', '/api/auth/register',
+    '/api/auth/accounts', '/api/auth/me', '/api/auth/logout',
+  ];
+  if (!PUBLIC.includes(pathname)) {
+    const u = auth.userByToken(tokenOf(req));
+    if (!u) return json(res, { ok: false, error: 'unauthorized', hint: '请先登录' }, 401);
   }
 
   for (const [method, pattern, handler] of routes) {

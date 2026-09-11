@@ -139,6 +139,39 @@ CREATE TABLE IF NOT EXISTS changes (
   at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  name TEXT DEFAULT '',
+  avatar TEXT DEFAULT '',
+  role TEXT DEFAULT 'owner',
+  title TEXT DEFAULT '',
+  dept TEXT DEFAULT '',
+  workspace_id TEXT NOT NULL,
+  invite_code TEXT DEFAULT '',
+  created_at TEXT,
+  last_login_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS invites (
+  code TEXT PRIMARY KEY,
+  created_by TEXT DEFAULT '',
+  note TEXT DEFAULT '',
+  max_uses INTEGER DEFAULT 10,
+  used_count INTEGER DEFAULT 0,
+  expires_at TEXT,
+  created_at TEXT,
+  disabled INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at TEXT,
+  expires_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS ai_feedback (
   id TEXT PRIMARY KEY,
   type TEXT,
@@ -151,6 +184,25 @@ CREATE INDEX IF NOT EXISTS idx_task_customer ON tasks(customer_id);
 CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_kb_cat ON kb_items(category);
 `);
+
+/* ------------------------------------------------------------------ 迁移：给业务表加 workspace_id */
+/** SQLite 的 ALTER TABLE ADD COLUMN 不支持 IF NOT EXISTS，先查 pragma */
+function ensureColumn(table, column, ddl) {
+  const cols = db.prepare('PRAGMA table_info(' + table + ')').all();
+  if (cols.some((c) => c.name === column)) return false;
+  db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + ddl);
+  return true;
+}
+
+const WS_TABLES = ['customers', 'followups', 'tasks', 'kb_items', 'conversations', 'cards', 'changes'];
+WS_TABLES.forEach((t) => ensureColumn(t, 'workspace_id', "workspace_id TEXT DEFAULT ''"));
+db.exec("CREATE INDEX IF NOT EXISTS idx_cust_ws ON customers(workspace_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_kb_ws ON kb_items(workspace_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_task_ws ON tasks(workspace_id)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_conv_ws ON conversations(workspace_id)");
+
+/** 演示工作区：老数据全部归到这里 */
+const DEMO_WS = 'ws-demo';
 
 /* ------------------------------------------------------------------ 工具 */
 const J = (v) => { try { return JSON.parse(v || '[]'); } catch { return []; } };
@@ -211,8 +263,8 @@ function seed() {
 
   const ic = db.prepare(`INSERT INTO customers
     (id,company_name,industry,contact_name,contact_position,contact_phone,owner_id,owner_name,
-     level,stage,status,tags,last_follow_at,days_since_follow,contact_count,external_userid,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+     level,stage,status,tags,last_follow_at,days_since_follow,contact_count,external_userid,created_at,updated_at,workspace_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
 
   SEED_CUSTOMERS.forEach((r, i) => {
     const [company, industry, contact, position, phone, owner, level, gap, tags] = r;
@@ -220,7 +272,7 @@ function seed() {
     ic.run(id, company, industry, contact, position, phone,
       'U' + (owner === '陈立' ? '01' : owner === '赵敏' ? '02' : '03'), owner,
       level, STAGE_OF(tags), level === 'high' ? '高意向' : level === 'mid' ? '活跃状态' : '需跟进',
-      S(tags), D(gap), gap, 3 + (i % 9), 'wm' + (1000000000 + i * 7919), D(30 + gap), D(Math.max(0, gap - 1)));
+      S(tags), D(gap), gap, 3 + (i % 9), 'wm' + (1000000000 + i * 7919), D(30 + gap), D(Math.max(0, gap - 1)), DEMO_WS);
   });
 
   const it = db.prepare('INSERT INTO tag_groups (name,color,tags,sort) VALUES (?,?,?,?)');
@@ -240,8 +292,8 @@ function seed() {
     '跟进合同流程，对方财务已审批，等待法务确认。',
   ];
   const ifu = db.prepare(`INSERT INTO followups
-    (id,customer_id,customer_name,content,summary,key_points,node_times,next_action,source,created_by,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    (id,customer_id,customer_name,content,summary,key_points,node_times,next_action,source,created_by,created_at,workspace_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
   SEED_CUSTOMERS.forEach((r, ci) => {
     const [company, , contact, , , owner, , gap] = r;
     const id = 'C' + String(1001 + ci);
@@ -253,7 +305,7 @@ function seed() {
         .replace(/\{point\}/g, POINTS[(ci + k) % POINTS.length]);
       const days = Math.max(0, gap - k * 5);
       ifu.run(uid('F'), id, company, content, content.slice(0, 34) + '…', '[]', '[]',
-        k === 0 ? '按约定提供方案对比材料' : '', k === 1 ? 'ai' : 'manual', owner, D(days));
+        k === 0 ? '按约定提供方案对比材料' : '', k === 1 ? 'ai' : 'manual', owner, D(days), DEMO_WS);
     }
   });
 
@@ -265,8 +317,8 @@ function seed() {
     ['发送{company}行业案例集', 'low', 8],
   ];
   const itk = db.prepare(`INSERT INTO tasks
-    (id,title,description,due_at,priority,status,owner_id,owner_name,customer_id,customer_name,source,created_at,completed_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    (id,title,description,due_at,priority,status,owner_id,owner_name,customer_id,customer_name,source,created_at,completed_at,workspace_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   SEED_CUSTOMERS.slice(0, 16).forEach((r, i) => {
     const [company, , , , , owner] = r;
     const t = TT[i % TT.length];
@@ -275,21 +327,21 @@ function seed() {
       i % 5 === 0 ? 'done' : i % 4 === 0 ? 'doing' : 'todo',
       'U' + (owner === '陈立' ? '01' : owner === '赵敏' ? '02' : '03'), owner, id, company,
       i % 3 === 0 ? 'ai' : i % 3 === 1 ? 'followup' : 'manual', D(2 + (i % 7)),
-      i % 5 === 0 ? D(1) : null);
+      i % 5 === 0 ? D(1) : null, DEMO_WS);
   });
 
   // 知识库
   const ik = db.prepare(`INSERT INTO kb_items
-    (id,category,title,content,type,file_type,tags,used_count,source,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    (id,category,title,content,type,file_type,tags,used_count,source,created_at,updated_at,workspace_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
   SEED_KB.forEach((k, i) => {
     ik.run('K' + (2001 + i), k.category, k.title, k.content, k.type || 'text',
-      k.file_type || null, S(k.tags || []), k.used_count || 0, 'seed', D(40 - i), D(40 - i));
+      k.file_type || null, S(k.tags || []), k.used_count || 0, 'seed', D(40 - i), D(40 - i), DEMO_WS);
   });
 
   // 看板卡片
   const icd = db.prepare(`INSERT INTO cards
-    (id,type,title,metric,sub,source,size,ord,added_by,note,warn,bar) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    (id,type,title,metric,sub,source,size,ord,added_by,note,warn,bar,workspace_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   [
     ['D01', 'kpi', '在管客户', 'total', 'high', null, 'sm', 1, 0, 0],
     ['D02', 'kpi', '本周跟进', 'followWeek', 'followTotal', null, 'sm', 2, 0, 0],
@@ -299,18 +351,40 @@ function seed() {
     ['D06', 'bars', '行业分布', null, null, 'byIndustry', 'half', 6, 0, 0],
     ['D07', 'table', '按负责人', null, null, 'byOwner', 'full', 7, 0, 0],
     ['D08', 'attention', '需要立即关注', null, null, 'attention', 'full', 8, 0, 0],
-  ].forEach((r) => icd.run(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], 'builtin', '', r[8], r[9]));
+  ].forEach((r) => icd.run(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], 'builtin', '', r[8], r[9], DEMO_WS));
 
   return true;
 }
 
+/** 把历史遗留数据（workspace_id 为空）归到演示工作区 */
+db.prepare("UPDATE customers SET workspace_id=? WHERE workspace_id IS NULL OR workspace_id=''").run(DEMO_WS);
+db.prepare("UPDATE followups SET workspace_id=? WHERE workspace_id IS NULL OR workspace_id=''").run(DEMO_WS);
+db.prepare("UPDATE tasks SET workspace_id=? WHERE workspace_id IS NULL OR workspace_id=''").run(DEMO_WS);
+db.prepare("UPDATE kb_items SET workspace_id=? WHERE workspace_id IS NULL OR workspace_id=''").run(DEMO_WS);
+db.prepare("UPDATE conversations SET workspace_id=? WHERE workspace_id IS NULL OR workspace_id=''").run(DEMO_WS);
+db.prepare("UPDATE cards SET workspace_id=? WHERE workspace_id IS NULL OR workspace_id=''").run(DEMO_WS);
+
 const seeded = seed();
 
 module.exports = {
-  db, J, S, uid, D, Dplus, seeded, DB_FILE,
-  reset() {
-    ['messages', 'conversations', 'changes', 'cards', 'kb_items', 'tasks', 'followups', 'tag_groups', 'customers']
-      .forEach((t) => db.exec('DELETE FROM ' + t));
-    seed();
+  db, J, S, uid, D, Dplus, seeded, DB_FILE, DEMO_WS, ensureColumn,
+  /** 重置某个工作区的业务数据（不动用户和邀请码） */
+  reset(ws) {
+    const target = ws || DEMO_WS;
+    const convIds = db.prepare('SELECT id FROM conversations WHERE workspace_id=?').all(target).map((c) => c.id);
+    convIds.forEach((id) => db.prepare('DELETE FROM messages WHERE conversation_id=?').run(id));
+    ['conversations', 'changes', 'cards', 'kb_items', 'tasks', 'followups', 'customers']
+      .forEach((t) => db.prepare('DELETE FROM ' + t + ' WHERE workspace_id=?').run(target));
+    // 只让该工作区的用户重新登录，其他人不受影响
+    db.prepare('SELECT id FROM users WHERE workspace_id=?').all(target)
+      .forEach((u) => db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id));
+    if (target === DEMO_WS) {
+      seed();
+    } else {
+      // 其他工作区：给它一份全新数据
+      const u = db.prepare('SELECT id,name FROM users WHERE workspace_id=?').get(target);
+      if (u) require('./auth.js').seedWorkspacePublic(target, u.name, u.id);
+    }
+    return true;
   },
 };

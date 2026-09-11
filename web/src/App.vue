@@ -10,6 +10,7 @@ import KnowledgeView from './components/KnowledgeView.vue';
 import AssistantView from './components/AssistantView.vue';
 import SettingsView from './components/SettingsView.vue';
 import Login from './components/Login.vue';
+import Register from './components/Register.vue';
 import { api, track } from './api.js';
 
 /* ---------------------------------------------------------- 一级导航 */
@@ -34,6 +35,7 @@ const SCENE_OF_NAV = {
 /* ---------------------------------------------------------- 账号 */
 const user = ref(null);
 const booting = ref(true);
+const authMode = ref('login');   // login | register
 const nav = ref('customer');
 
 const NAV = computed(() => {
@@ -185,7 +187,8 @@ onMounted(async () => {
 <template>
   <div v-if="booting" class="boot">正在加载…</div>
 
-  <Login v-else-if="!user" @ok="onLogin" />
+  <Register v-else-if="!user && authMode === 'register'" @ok="onLogin" @back="authMode = 'login'" />
+  <Login    v-else-if="!user" @ok="onLogin" @register="authMode = 'register'" />
 
   <div v-else class="shell">
     <aside class="rail">

@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { api, track } from '../api.js';
 
-const emit = defineEmits(['ok']);
+const emit = defineEmits(['ok', 'register']);
 
 const accounts = ref([]);
 const username = ref('chenli');
@@ -72,6 +72,10 @@ onMounted(async () => {
           {{ loading ? '登录中…' : '立即登录 →' }}
         </button>
 
+        <div class="back">
+          还没有账号？<a @click="emit('register')">用邀请码注册</a>
+        </div>
+
         <div class="divider"><span>演示账号（点击直接登录）</span></div>
         <div class="quick">
           <button v-for="a in accounts" :key="a.username" class="quick-item" @click="quick(a)">
@@ -138,6 +142,8 @@ onMounted(async () => {
 .btn-submit:hover:not(:disabled) { background: #000; }
 .btn-submit:disabled { opacity: .5; cursor: not-allowed; }
 
+.back { text-align: center; font-size: 12.5px; color: var(--ink-3); margin-top: 14px; }
+.back a { color: var(--accent); cursor: pointer; }
 .divider {
   display: flex; align-items: center; gap: 10px; margin: 24px 0 14px;
   font-size: 11px; color: var(--ink-4);

@@ -5,6 +5,12 @@ import { api, track } from '../api.js';
 const ctx = inject('aicrm');
 
 const tab = ref('ai');
+const invites = ref([]);
+const users = ref([]);
+const invStats = ref(null);
+const newInvite = ref({ note: '', max_uses: 5, expires_days: 30 });
+const creating = ref(false);
+const host = ref(location.origin);
 const cfg = ref(null);
 const providers = ref([]);
 const form = ref({ provider: 'dashscope', base_url: '', api_key: '', model: '', temperature: 0.6, max_tokens: 1500, system_extra: '', enabled: true });
@@ -72,6 +78,49 @@ async function clearKey() {
   setTimeout(() => (msg.value = ''), 2500);
 }
 
+async function loadAuth() {
+  const [i, u] = await Promise.all([api.invites(), api.users()]);
+  if (i.ok) { invites.value = i.list; invStats.value = i.stats; }
+  if (u.ok) users.value = u.list;
+}
+
+async function makeInvite() {
+  creating.value = true;
+  const r = await api.createInvite(newInvite.value);
+  creating.value = false;
+  if (r.ok) {
+    await loadAuth();
+    ctx.flash('邀请码已生成');
+    track('invite_create', { code: r.invite.code });
+  }
+}
+
+async function copyInvite(code) {
+  const link = host.value + '/?invite=' + code;
+  try { await navigator.clipboard.writeText(link); ctx.flash('注册链接已复制'); }
+  catch { ctx.flash(link); }
+}
+
+async function toggleInvite(code) {
+  await api.toggleInvite(code);
+  await loadAuth();
+}
+
+async function removeInvite(code) {
+  if (!confirm('删除这个邀请码？已经用它注册的账号不受影响。')) return;
+  await api.removeInvite(code);
+  await loadAuth();
+  ctx.flash('已删除');
+}
+
+async function removeUser(u) {
+  if (!confirm(`删除用户「${u.name}」及其全部数据？此操作不可撤销。`)) return;
+  const r = await api.removeUser(u.id);
+  if (!r.ok) { ctx.flash(r.error || '删除失败'); return; }
+  await loadAuth();
+  ctx.flash('已删除该用户及其数据');
+}
+
 const modeText = computed(() => {
   const m = cfg.value && cfg.value.effective;
   return m === 'user' ? '你自己的 API（已生效）'
@@ -79,7 +128,7 @@ const modeText = computed(() => {
     : '本地规则引擎（未配置 Key）';
 });
 
-onMounted(load);
+onMounted(async () => { await load(); await loadAuth(); });
 </script>
 
 <template>
@@ -91,7 +140,7 @@ onMounted(load);
       </div>
       <div class="tabs">
         <button :class="{ on: tab === 'ai' }" @click="tab = 'ai'">AI 服务</button>
-        <button :class="{ on: tab === 'account' }" @click="tab = 'account'">账号</button>
+        <button :class="{ on: tab === 'account' }" @click="tab = 'account'; loadAuth()">账号与邀请</button>
       </div>
     </header>
 
@@ -219,7 +268,7 @@ onMounted(load);
         </div>
       </template>
 
-      <!-- ============ 账号 ============ -->
+      <!-- ============ 账号与邀请 ============ -->
       <template v-else>
         <div class="card sec" v-if="ctx && ctx.user.value">
           <div class="sec-h">当前账号</div>
@@ -233,17 +282,76 @@ onMounted(load);
           <div class="kv">
             <div><span>数据范围</span><b>{{ ['', '本人', '本人及下属', '本部门', '本部门及子部门', '全部'][ctx.user.value.data_scope] }}</b></div>
             <div><span>可见模块</span><b>{{ ctx.user.value.nav.join(' / ') }}</b></div>
-            <div><span>写权限</span><b>{{ ctx.user.value.readonly ? '只读' : '可读写' }}</b></div>
+            <div><span>工作区</span><b class="mono">{{ ctx.user.value.workspace_id }}</b></div>
           </div>
         </div>
+
+        <!-- 邀请码 -->
         <div class="card sec">
-          <div class="sec-h">演示账号</div>
-          <div class="hl">
-            <div><code>chenli</code> / 123456 — 销售负责人（全部功能）</div>
-            <div><code>zhaomin</code> / 123456 — 一线销售（客户/知识库/任务）</div>
-            <div><code>wangtao</code> / 123456 — 一线销售</div>
-            <div><code>boss</code> / 123456 — 企业老板（只读）</div>
+          <div class="sec-h">
+            邀请码
+            <span class="dim" style="font-weight:400;font-size:11px">
+              共 {{ invites.length }} 个 · {{ invStats ? invStats.active_invites : 0 }} 个可用
+            </span>
           </div>
+
+          <div class="inv-form">
+            <input v-model="newInvite.note" class="fi" placeholder="备注（给谁用，比如：老王）" />
+            <label class="fi-num">
+              可用次数
+              <input v-model.number="newInvite.max_uses" type="number" min="1" max="100" />
+            </label>
+            <label class="fi-num">
+              有效天数
+              <input v-model.number="newInvite.expires_days" type="number" min="1" max="365" />
+            </label>
+            <button class="btn btn-primary btn-sm" :disabled="creating" @click="makeInvite">
+              {{ creating ? '生成中…' : '+ 生成邀请码' }}
+            </button>
+          </div>
+
+          <div v-if="invites.length" class="inv-list">
+            <div v-for="i in invites" :key="i.code" class="inv" :class="{ off: i.disabled || i.used_count >= i.max_uses }">
+              <div class="iv-code mono">{{ i.code }}</div>
+              <div class="grow">
+                <div class="iv-note">{{ i.note || '（无备注）' }}</div>
+                <div class="iv-meta">
+                  {{ i.used_count }} / {{ i.max_uses }} 次
+                  <span v-if="i.expires_at"> · {{ new Date(i.expires_at).toLocaleDateString('zh-CN') }} 到期</span>
+                  <span v-if="i.disabled" class="pill warn" style="margin-left:6px">已停用</span>
+                  <span v-else-if="i.used_count >= i.max_uses" class="pill" style="margin-left:6px">已用完</span>
+                </div>
+              </div>
+              <button class="btn btn-sm" @click="copyInvite(i.code)">复制链接</button>
+              <button class="btn btn-sm" @click="toggleInvite(i.code)">{{ i.disabled ? '启用' : '停用' }}</button>
+              <button class="btn btn-sm del" @click="removeInvite(i.code)">删</button>
+            </div>
+          </div>
+          <div v-else class="dim" style="font-size:12px">
+            还没有邀请码。生成一个，把链接发给朋友，他就能自己注册并拿到独立的数据。
+          </div>
+        </div>
+
+        <!-- 用户 -->
+        <div class="card sec">
+          <div class="sec-h">已注册用户<span class="dim" style="font-weight:400;font-size:11px">{{ users.length }} 个</span></div>
+          <table class="ut">
+            <thead><tr><th>用户</th><th>账号</th><th>客户数</th><th>注册时间</th><th>最近登录</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="u in users" :key="u.id">
+                <td><b>{{ u.name }}</b> <span class="tag">{{ u.role_name }}</span></td>
+                <td class="mono">{{ u.username }}</td>
+                <td>{{ u.customer_count }}</td>
+                <td>{{ u.created_at ? new Date(u.created_at).toLocaleDateString('zh-CN') : '—' }}</td>
+                <td>{{ u.last_login_at ? new Date(u.last_login_at).toLocaleString('zh-CN') : '从未' }}</td>
+                <td>
+                  <button v-if="u.username !== 'chenli' && ctx.user.value.id !== u.id"
+                          class="btn btn-sm del" @click="removeUser(u)">删除</button>
+                  <span v-else class="dim" style="font-size:11px">内置</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </template>
     </div>
@@ -325,6 +433,40 @@ onMounted(load);
   margin-top: 11px; padding: 9px 11px; border-radius: var(--r-2);
   background: var(--green-soft); font-size: 11.5px; color: var(--green); line-height: 1.65;
 }
+
+.inv-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.fi {
+  flex: 1; min-width: 160px; height: 32px; padding: 0 10px; font-size: 12.5px;
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--surface-2); outline: 0; color: var(--ink);
+}
+.fi:focus { border-color: var(--accent-line); }
+.fi-num { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-3); }
+.fi-num input {
+  width: 62px; height: 32px; padding: 0 8px; font-size: 12.5px;
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--surface-2); outline: 0; color: var(--ink);
+}
+
+.inv-list { display: flex; flex-direction: column; gap: 7px; }
+.inv {
+  display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+  border: 1px solid var(--line); border-radius: var(--r-2); background: var(--surface-2);
+}
+.inv.off { opacity: .5; }
+.iv-code {
+  font-size: 14px; font-weight: 650; letter-spacing: 2px; color: var(--accent);
+  background: var(--accent-soft); padding: 4px 10px; border-radius: var(--r-1);
+}
+.iv-note { font-size: 12.5px; }
+.iv-meta { font-size: 10.5px; color: var(--ink-4); margin-top: 2px; }
+
+.ut { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.ut th { text-align: left; font-weight: 500; color: var(--ink-3); font-size: 11.5px; padding: 0 10px 8px; border-bottom: 1px solid var(--line); }
+.ut td { padding: 9px 10px; border-bottom: 1px solid var(--line-soft); }
+.mono { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
+.btn.del { color: var(--red); border-color: rgba(179,58,43,.3); }
+.btn.del:hover { background: var(--red-soft); border-color: var(--red); }
 
 .acct { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; }
 .ac-av { width: 40px; height: 40px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-size: 16px; font-weight: 650; }

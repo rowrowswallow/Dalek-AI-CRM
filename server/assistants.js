@@ -89,11 +89,11 @@ const rowMsg = (r) => r && ({
   at: r.at, ...(() => { try { return JSON.parse(r.extra || '{}'); } catch { return {}; } })(),
 });
 
-function newConversation(assistantId, title, context) {
+function newConversation(assistantId, title, context, ws) {
   const id = uid('CV');
   const t = new Date().toISOString();
-  db.prepare('INSERT INTO conversations (id,assistant_id,title,context,created_at,updated_at) VALUES (?,?,?,?,?,?)')
-    .run(id, assistantId, title || '新对话', JSON.stringify(context || {}), t, t);
+  db.prepare('INSERT INTO conversations (id,assistant_id,title,context,created_at,updated_at,workspace_id) VALUES (?,?,?,?,?,?,?)')
+    .run(id, assistantId, title || '新对话', JSON.stringify(context || {}), t, t, ws || '');
   // 每个助手的会话上限
   const mine = db.prepare('SELECT id FROM conversations WHERE assistant_id=? ORDER BY updated_at DESC').all(assistantId);
   if (mine.length > MAX_CONV_PER_ASSISTANT) {
@@ -174,10 +174,13 @@ const api = {
   },
 
   /* ---------------- 会话 ---------------- */
-  conversations(assistantId) {
-    const rows = assistantId
-      ? db.prepare('SELECT * FROM conversations WHERE assistant_id=? ORDER BY updated_at DESC').all(assistantId)
-      : db.prepare('SELECT * FROM conversations ORDER BY updated_at DESC').all();
+  conversations(assistantId, ws) {
+    const cond = [];
+    const args = [];
+    if (assistantId) { cond.push('assistant_id=?'); args.push(assistantId); }
+    if (ws) { cond.push('workspace_id=?'); args.push(ws); }
+    const where = cond.length ? ' WHERE ' + cond.join(' AND ') : '';
+    const rows = db.prepare('SELECT * FROM conversations' + where + ' ORDER BY updated_at DESC').all(...args);
     return rows.map((r) => {
       const c = rowConv(r);
       const n = db.prepare('SELECT COUNT(*) AS c FROM messages WHERE conversation_id=?').get(r.id).c;
@@ -196,10 +199,13 @@ const api = {
   newConversation,
   addMessage,
 
-  clearConversations(assistantId) {
-    const rows = assistantId
-      ? db.prepare('SELECT id FROM conversations WHERE assistant_id=?').all(assistantId)
-      : db.prepare('SELECT id FROM conversations').all();
+  clearConversations(assistantId, ws) {
+    const cond = [];
+    const args = [];
+    if (assistantId) { cond.push('assistant_id=?'); args.push(assistantId); }
+    if (ws) { cond.push('workspace_id=?'); args.push(ws); }
+    const where = cond.length ? ' WHERE ' + cond.join(' AND ') : '';
+    const rows = db.prepare('SELECT id FROM conversations' + where).all(...args);
     rows.forEach((r) => {
       db.prepare('DELETE FROM messages WHERE conversation_id=?').run(r.id);
       db.prepare('DELETE FROM conversations WHERE id=?').run(r.id);
@@ -225,17 +231,22 @@ const api = {
   },
 
   /* ---------------- 看板 ---------------- */
-  cards: () => db.prepare('SELECT * FROM cards ORDER BY ord').all().map(rowCard),
+  cards: (ws) => (ws
+    ? db.prepare('SELECT * FROM cards WHERE workspace_id=? ORDER BY ord').all(ws)
+    : db.prepare('SELECT * FROM cards ORDER BY ord').all()
+  ).map(rowCard),
   cardTemplates: () => CARD_TEMPLATES,
 
-  addCard(d) {
+  addCard(d, ws) {
     const id = 'D' + Date.now().toString(36);
-    const maxOrd = db.prepare('SELECT COALESCE(MAX(ord),0) AS m FROM cards').get().m;
-    db.prepare(`INSERT INTO cards (id,type,title,metric,sub,source,size,ord,added_by,note,warn,bar)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    const maxOrd = (ws
+      ? db.prepare('SELECT COALESCE(MAX(ord),0) AS m FROM cards WHERE workspace_id=?').get(ws)
+      : db.prepare('SELECT COALESCE(MAX(ord),0) AS m FROM cards').get()).m;
+    db.prepare(`INSERT INTO cards (id,type,title,metric,sub,source,size,ord,added_by,note,warn,bar,workspace_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       id, d.type || 'kpi', d.title || '新卡片', d.metric || null, d.sub || null,
       d.source || null, d.size || 'half', maxOrd + 1, d.added_by || 'dashboard',
-      d.note || '', d.warn ? 1 : 0, d.bar ? 1 : 0);
+      d.note || '', d.warn ? 1 : 0, d.bar ? 1 : 0, ws || '');
     return rowCard(db.prepare('SELECT * FROM cards WHERE id=?').get(id));
   },
 
@@ -259,8 +270,9 @@ const api = {
     return true;
   },
 
-  resetCards() {
-    db.prepare('DELETE FROM cards').run();
+  resetCards(ws) {
+    if (ws) db.prepare('DELETE FROM cards WHERE workspace_id=?').run(ws);
+    else db.prepare('DELETE FROM cards').run();
     [
       ['D01', 'kpi', '在管客户', 'total', 'high', null, 'sm', 0, 0],
       ['D02', 'kpi', '本周跟进', 'followWeek', 'followTotal', null, 'sm', 0, 0],
@@ -271,27 +283,31 @@ const api = {
       ['D07', 'table', '按负责人', null, null, 'byOwner', 'full', 0, 0],
       ['D08', 'attention', '需要立即关注', null, null, 'attention', 'full', 0, 0],
     ].forEach((r, i) => {
-      db.prepare(`INSERT INTO cards (id,type,title,metric,sub,source,size,ord,added_by,note,warn,bar)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(r[0], r[1], r[2], r[3], r[4], r[5], r[6], i + 1, 'builtin', '', r[7], r[8]);
+      db.prepare(`INSERT INTO cards (id,type,title,metric,sub,source,size,ord,added_by,note,warn,bar,workspace_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        (ws ? ws + '-' : '') + r[0] + '-' + Math.random().toString(36).slice(2, 6),
+        r[1], r[2], r[3], r[4], r[5], r[6], i + 1, 'builtin', '', r[7], r[8], ws || '');
     });
-    return api.cards();
+    return api.cards(ws);
   },
 
-  changes: () => db.prepare('SELECT * FROM changes ORDER BY at DESC LIMIT 50').all()
+  changes: (ws) => (ws
+    ? db.prepare('SELECT * FROM changes WHERE workspace_id=? ORDER BY at DESC LIMIT 50').all(ws)
+    : db.prepare('SELECT * FROM changes ORDER BY at DESC LIMIT 50').all())
     .map((r) => ({ id: r.id, from: r.from_who, from_name: r.from_name, reports_to: r.reports_to,
                    action: r.action, summary: r.summary, card_id: r.card_id, at: r.at })),
 
   logChange(entry) {
     const id = uid('CH');
     const at = new Date().toISOString();
-    db.prepare('INSERT INTO changes (id,from_who,from_name,reports_to,action,summary,card_id,at) VALUES (?,?,?,?,?,?,?,?)')
+    db.prepare('INSERT INTO changes (id,from_who,from_name,reports_to,action,summary,card_id,at,workspace_id) VALUES (?,?,?,?,?,?,?,?,?)')
       .run(id, entry.from || '', entry.from_name || '', entry.reports_to || '',
-           entry.action || '', entry.summary || '', entry.card_id || '', at);
+           entry.action || '', entry.summary || '', entry.card_id || '', at, entry.ws || '');
     // 向负责该页面的助手汇报：写入它的会话
     const target = ASSISTANTS.find((a) => a.id === entry.reports_to);
     if (target) {
       let row = db.prepare('SELECT id FROM conversations WHERE assistant_id=? ORDER BY updated_at DESC LIMIT 1').get(target.id);
-      let convId = row ? row.id : newConversation(target.id, '看板变更通知', {}).id;
+      let convId = row ? row.id : newConversation(target.id, '看板变更通知', {}, entry.ws).id;
       addMessage(convId, 'system', '【来自「' + entry.from_name + '」的变更汇报】' + entry.summary);
     }
     return { id, at, ...entry };

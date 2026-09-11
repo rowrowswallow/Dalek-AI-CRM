@@ -75,8 +75,11 @@ const api = {
   categories: () => CATEGORIES,
   types: () => TYPES,
 
-  list({ category, type, q, tag } = {}) {
-    let l = db.prepare('SELECT * FROM kb_items').all().map(rowKb);
+  list({ category, type, q, tag } = {}, ws) {
+    let l = (ws
+      ? db.prepare('SELECT * FROM kb_items WHERE workspace_id=?').all(ws)
+      : db.prepare('SELECT * FROM kb_items').all()
+    ).map(rowKb);
     if (category && category !== 'all') l = l.filter((x) => x.category === category);
     if (type && type !== 'all') l = l.filter((x) => x.type === type);
     if (tag) l = l.filter((x) => x.tags.includes(tag));
@@ -95,14 +98,14 @@ const api = {
     return rowKb(r);
   },
 
-  add(d) {
+  add(d, ws) {
     const id = uid('K');
     db.prepare(`INSERT INTO kb_items
-      (id,category,title,content,type,file_type,tags,used_count,source,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+      (id,category,title,content,type,file_type,tags,used_count,source,created_at,updated_at,workspace_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       id, d.category || 'product', d.title || '未命名', d.content || '',
       d.type || 'text', d.file_type || null, S(d.tags || []), 0,
-      d.source || 'manual', new Date().toISOString(), new Date().toISOString());
+      d.source || 'manual', new Date().toISOString(), new Date().toISOString(), ws || '');
     return api.get(id);
   },
 
@@ -135,8 +138,11 @@ const api = {
     return api.get(id);
   },
 
-  stats() {
-    const all = db.prepare('SELECT * FROM kb_items').all().map(rowKb);
+  stats(ws) {
+    const all = (ws
+      ? db.prepare('SELECT * FROM kb_items WHERE workspace_id=?').all(ws)
+      : db.prepare('SELECT * FROM kb_items').all()
+    ).map(rowKb);
     return {
       total: all.length,
       totalUsed: all.reduce((a, b) => a + (b.used_count || 0), 0),
@@ -152,9 +158,11 @@ const api = {
     };
   },
 
-  tags() {
+  tags(ws) {
     const m = {};
-    db.prepare('SELECT tags FROM kb_items').all().forEach((r) => {
+    const rows = ws ? db.prepare('SELECT tags FROM kb_items WHERE workspace_id=?').all(ws)
+                    : db.prepare('SELECT tags FROM kb_items').all();
+    rows.forEach((r) => {
       J(r.tags).forEach((t) => { m[t] = (m[t] || 0) + 1; });
     });
     return Object.entries(m).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
